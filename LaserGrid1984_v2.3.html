@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fényháló 1984</title>
+<style>
+  /* ============================================================
+     FÉNYHÁLÓ 1984 v2 — retró terminál stílusú lézertükrös játék
+     15×15 rács, 12 fokozat, véletlenszerűen generált pályák
+     ÚJ: színes sugarak, színszűrők, sugárosztók, mentett haladás
+     Szín- és tipográfia: foszforzöld monokróm CRT + színes lézerek
+     ============================================================ */
+  :root{
+    --bg:#020a04; --panel:#04140a; --grid:#0c3b1d; --dim:#1f7a3d;
+    --green:#39ff7a; --bright:#b6ffce; --amber:#ffb53b; --beam:#7dffb0;
+    --target:#2fd06a; --hot:#aaffc8; --wall:#0a2c16;
+    --cyan:#4be3ff; --magenta:#ff5bd6;
+    --font:"Courier New","Lucida Console",monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--green);
+    font-family:var(--font); text-shadow:0 0 4px rgba(57,255,122,.55);
+  }
+  /* CRT pásztázóvonal-réteg */
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
+    background:repeating-linear-gradient(to bottom,
+      rgba(0,0,0,0) 0px,rgba(0,0,0,0) 2px,rgba(0,0,0,.18) 3px,rgba(0,0,0,.18) 4px);
+    mix-blend-mode:multiply;
+  }
+  .frame{ max-width:1040px; margin:0 auto; padding:18px 16px 40px; }
+
+  header{ text-align:center; margin-bottom:14px; }
+  header h1{
+    margin:0; font-size:clamp(20px,5vw,34px); letter-spacing:6px; color:var(--bright);
+    text-shadow:0 0 10px rgba(57,255,122,.9),0 0 24px rgba(57,255,122,.5);
+  }
+  header .sub{ margin-top:4px; font-size:12px; letter-spacing:3px; color:var(--dim); }
+
+  .layout{ display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+
+  /* Játéktér */
+  .stage{
+    position:relative; flex:0 0 auto; border:1px solid var(--dim); background:#020f06;
+    padding:10px; box-shadow:0 0 0 1px #062a14 inset,0 0 22px rgba(57,255,122,.12);
+  }
+  canvas{
+    display:block; width:min(94vw,600px); height:min(94vw,600px);
+    image-rendering:pixelated; cursor:crosshair; background:#010c05;
+  }
+
+  /* Győzelmi felirat */
+  .win{
+    position:absolute; inset:10px; display:none; align-items:center; justify-content:center;
+    flex-direction:column; text-align:center; background:rgba(1,8,4,.84); z-index:5;
+    animation:flick .12s steps(2) infinite;
+  }
+  .win.show{ display:flex; }
+  .win h2{
+    margin:0; font-size:clamp(22px,6vw,40px); letter-spacing:4px; color:var(--bright);
+    text-shadow:0 0 14px var(--green),0 0 30px var(--green);
+  }
+  .win p{ margin:10px 16px 0; font-size:13px; color:var(--green); letter-spacing:2px; line-height:1.5; }
+  @keyframes flick{ 0%{opacity:1} 100%{opacity:.92} }
+
+  /* Műszerpanel */
+  .panel{
+    flex:1 1 290px; min-width:270px; max-width:390px; border:1px solid var(--dim);
+    background:var(--panel); padding:14px 16px; box-shadow:0 0 18px rgba(57,255,122,.08) inset;
+  }
+  .panel h3{
+    margin:0 0 10px; font-size:13px; letter-spacing:3px; color:var(--bright);
+    border-bottom:1px dashed var(--grid); padding-bottom:8px;
+  }
+
+  .readout{ display:grid; grid-template-columns:1fr auto; gap:5px 8px; margin-bottom:10px; }
+  .readout .lbl{ color:var(--dim); font-size:12px; letter-spacing:1px; }
+  .readout .val{
+    color:var(--bright); font-size:13px; text-align:right; letter-spacing:1px;
+    text-shadow:0 0 8px rgba(57,255,122,.8);
+  }
+  .readout .val.big{ font-size:16px; }
+  .readout .sep{ grid-column:1 / -1; border-top:1px dashed var(--grid); margin:3px 0; }
+
+  /* Nehézségmérő: 12 szegmens */
+  .diff{ display:flex; gap:3px; margin:4px 0 10px; }
+  .diff i{ flex:1; height:9px; border:1px solid var(--grid); background:#020f06; }
+  .diff i.on{ background:var(--green); box-shadow:0 0 7px var(--green); border-color:var(--dim); }
+
+  /* Célpont-előrehaladás sáv */
+  .bar{ height:10px; border:1px solid var(--grid); background:#020f06; margin:2px 0 12px; }
+  .bar>i{ display:block; height:100%; width:0%; background:var(--green); box-shadow:0 0 8px var(--green); transition:width .25s ease; }
+
+  .rules{
+    font-size:12px; line-height:1.6; color:var(--dim); letter-spacing:.3px;
+  }
+  .rules b{ color:var(--green); }
+  .rules .gly{ color:var(--green); }
+  .rules .c-g{ color:var(--green); }
+  .rules .c-c{ color:var(--cyan); }
+  .rules .c-m{ color:var(--magenta); }
+
+  /* Súgó felugró ablak — CRT-stílusú modal */
+  .help{
+    position:fixed; inset:0; z-index:60; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(1,6,3,.82); padding:16px;
+  }
+  .help.show{ display:flex; }
+  .help .box{
+    max-width:560px; max-height:86vh; overflow:auto;
+    border:1px solid var(--dim); background:var(--panel);
+    padding:16px 18px;
+    box-shadow:0 0 0 1px #062a14 inset, 0 0 28px rgba(57,255,122,.22);
+  }
+  .help .box h3{
+    margin:0 0 12px; font-size:14px; letter-spacing:3px; color:var(--bright);
+    border-bottom:1px dashed var(--grid); padding-bottom:8px;
+  }
+  .help .box button{
+    display:block; width:100%; margin-top:14px;
+    font-family:var(--font); font-size:12px; letter-spacing:1.5px;
+    color:var(--green); background:#03190d; border:1px solid var(--dim);
+    padding:10px 6px; cursor:pointer;
+    text-shadow:0 0 6px rgba(57,255,122,.7); transition:all .12s ease;
+  }
+  .help .box button:hover{ background:#0a3a1d; color:var(--bright); box-shadow:0 0 12px rgba(57,255,122,.5); }
+
+  .buttons{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0 4px; }
+  .buttons button{
+    font-family:var(--font); font-size:12px; letter-spacing:1.3px; color:var(--green);
+    background:#03190d; border:1px solid var(--dim); padding:9px 6px; cursor:pointer;
+    text-shadow:0 0 6px rgba(57,255,122,.7); transition:all .12s ease;
+  }
+  .buttons button.wide{ grid-column:1 / -1; }
+  .buttons button.danger{ color:#7a4a1f; border-color:#3a2a12; font-size:10.5px; padding:6px; }
+  .buttons button.danger:hover{ color:var(--amber); border-color:var(--amber); box-shadow:0 0 10px rgba(255,181,59,.35); background:#1c1206; }
+  .buttons button:hover:not(:disabled):not(.danger){ background:#0a3a1d; color:var(--bright); box-shadow:0 0 12px rgba(57,255,122,.5); }
+  .buttons button:active:not(:disabled){ transform:translateY(1px); }
+  .buttons button:disabled{ opacity:.32; cursor:not-allowed; }
+
+  footer{ text-align:center; margin-top:18px; font-size:11px; color:#11522a; letter-spacing:2px; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <header>
+    <h1>FÉNYHÁLÓ&nbsp;1984</h1>
+    <div class="sub">LÉZER-TÜKÖR LOGIKAI TERMINÁL v2 &nbsp;//&nbsp; 15×15 &nbsp;//&nbsp; 12 FOKOZAT &nbsp;//&nbsp; SZÍNES SUGARAK</div>
+  </header>
+
+  <div class="layout">
+
+    <div class="stage">
+      <canvas id="board" width="600" height="600"></canvas>
+      <div class="win" id="win">
+        <h2>&gt; PÁLYA MEGOLDVA</h2>
+        <p id="winMsg">MINDEN ÉRZÉKELŐ AKTÍV</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>&gt; MŰSZERPANEL</h3>
+
+      <div class="readout">
+        <span class="lbl">SZINT</span>          <span class="val big" id="rLevel">1 / 12</span>
+        <span class="lbl">LÉPÉSEK</span>        <span class="val" id="rSteps">0</span>
+        <span class="lbl">PAR (MIN. LÉPÉS)</span><span class="val" id="rPar">0</span>
+        <span class="lbl">CÉLPONTOK</span>      <span class="val" id="rTotal">0</span>
+        <span class="lbl">AKTÍV</span>          <span class="val" id="rActive">0</span>
+        <span class="lbl">FORG. TÜKRÖK</span>   <span class="val" id="rMirrors">0</span>
+        <span class="sep"></span>
+        <span class="lbl">PONTSZÁM</span>       <span class="val big" id="rScore">0</span>
+        <span class="lbl">SZINT REKORD</span>   <span class="val" id="rBest">—</span>
+        <span class="lbl">ELÉRT MAX SZINT</span><span class="val" id="rMax">1</span>
+      </div>
+
+      <div class="diff" id="diff"></div>
+      <div class="bar"><i id="bar"></i></div>
+
+      <div class="buttons">
+        <button id="btnReset"  class="wide">⟲ ÚJRAKEZDÉS</button>
+        <button id="btnNew"    class="wide">♻ ÚJ PÁLYA (AZONOS SZINT)</button>
+        <button id="btnPrev">◀ ELŐZŐ SZINT</button>
+        <button id="btnNext">KÖVETKEZŐ SZINT ▶</button>
+        <button id="btnHelp">? SÚGÓ</button>
+        <button id="btnSound">♪ HANG: BE</button>
+        <button id="btnWipe"  class="wide danger">✕ MENTETT HALADÁS TÖRLÉSE</button>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>ANTHROPIC SYSTEMS // FÉNYHÁLÓ TERMINÁL v2 // © MMLXXXIV</footer>
+</div>
+
+<!-- Súgó felugró ablak: a játékszabályok ide költöztek a panelből -->
+<div class="help" id="help">
+  <div class="box">
+    <h3>&gt; SÚGÓ — JÁTÉKSZABÁLYOK</h3>
+    <div class="rules">
+      <b>CÉL:</b> vezesd el a lézert a forrásokból minden érzékelőig.<br><br>
+      <span class="gly">◧</span> = forrás &nbsp; <span class="gly">◎</span> = érzékelő &nbsp;
+      <span class="gly">╱╲</span> = forgatható tükör &nbsp; <span style="color:var(--amber)">╱╲</span> = rögzített tükör<br>
+      <span class="gly">█</span> = fal &nbsp; <span style="color:#eafff2">◇</span> = <b>sugárosztó</b> (rögzített): a sugár áthalad
+      ÉS egy tükrözött másolat is indul<br>
+      <span class="gly">▥</span> = <b>színszűrő</b>: csak a saját színű sugarat engedi át<br><br>
+      A sugarak <b>színesek</b> (<span class="c-g">zöld</span>, <span class="c-c">cián</span>,
+      <span class="c-m">magenta</span>): minden érzékelő csak a <b>saját színű</b>
+      sugártól aktiválódik. A tükrök és osztók minden színt terelnek.<br><br>
+      <b>KATTINTS</b> egy forgatható tükörre a ╱/╲ váltáshoz. Vigyázz, vannak
+      <b>megtévesztő</b> tükrök és szűrők is! Minden pálya véletlenszerű, de a gép
+      <b>generálás előtt leellenőrzi</b>, hogy megoldható és nincs előre megoldva.<br><br>
+      <b>PONT:</b> szint×100 + bónusz, ha a PAR-hoz közeli lépésből oldod meg.
+      A pontszám és a haladás <b>automatikusan mentődik</b> ebben a böngészőben.<br><br>
+      Billentyűk: <b>R</b> újrakezdés &nbsp; <b>N</b> új pálya &nbsp; <b>←/→</b> szintváltás &nbsp;
+      <b>M</b> hang be/ki &nbsp; <b>H</b> súgó &nbsp; <b>Esc</b> bezárás.
+    </div>
+    <button id="btnHelpClose">◄ VISSZA A JÁTÉKHOZ</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================================================================
+   ALAPADATOK
+   A rács 15×15. Koordináták (x=oszlop, y=sor), 0..14.
+   Irányok egységvektorai: R(jobb) L(bal) U(fel) D(le).
+   Sugárszínek: G (zöld), C (cián), M (magenta).
+   ================================================================ */
+const GRID = 15;
+const CELL = 40;                       // egy cella oldala a vásznon (15*40 = 600)
+const MAX_TIER = 12;
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+
+const DIR  = { R:[1,0], L:[-1,0], U:[0,-1], D:[0,1] };
+const PERP = { R:['U','D'], L:['U','D'], U:['L','R'], D:['L','R'] };
+const COLORS = ['G','C','M'];
+const COLOR_DEFS = {
+  G:{ beam:'#39ff7a', bright:'#b6ffce', name:'ZÖLD'    },
+  C:{ beam:'#4be3ff', bright:'#cdf3ff', name:'CIÁN'    },
+  M:{ beam:'#ff5bd6', bright:'#ffd0ef', name:'MAGENTA' }
+};
+
+const key = (x,y) => x + "," + y;
+const inB = (x,y) => x>=0 && x<GRID && y>=0 && y<GRID;
+const cx  = x => x*CELL + CELL/2;      // cella középpont X a vásznon
+const cy  = y => y*CELL + CELL/2;      // cella középpont Y a vásznon
+
+/* Tükör-visszaverődés:
+   '/'  : [dx,dy] -> [-dy,-dx]
+   '\\' : [dx,dy] -> [ dy, dx]   ('\\' a kódban egyetlen visszaper) */
+function reflect(dx,dy,t){ return t === '/' ? [-dy,-dx] : [dy,dx]; }
+
+/* Adott be-irányból kívánt ki-irányhoz a megfelelő tükörtípus */
+function mirrorTypeFor(inDir,outDir){
+  const [dx,dy] = DIR[inDir];
+  const s = reflect(dx,dy,'/');
+  const o = DIR[outDir];
+  return (s[0]===o[0] && s[1]===o[1]) ? '/' : '\\';
+}
+
+/* Apró segédek */
+function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+function pick(a){ return a[Math.floor(Math.random()*a.length)]; }
+function shuffle(a){
+  const c=a.slice();
+  for(let i=c.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [c[i],c[j]]=[c[j],c[i]]; }
+  return c;
+}
+
+/* ================================================================
+   FOKOZATPARAMÉTEREK (1..12)
+   A nehézséget a fokozatonként RÖGZÍTETT szerkezet hordozza, így az
+   azonos szintű pályák minden generálásnál nagyjából azonos nehézségűek.
+     sources      = lézerforrások (különböző színnel)
+     rotPath      = útvonalon lévő FORGATHATÓ tükrök (2. szinttől >=3,
+                    hogy ne legyen 1-2 kattintásos megoldás)
+     fixed        = útvonalon lévő RÖGZÍTETT tükrök
+     targets      = célpontok (színhelyesek)
+     splitters    = sugárosztók (rögzítettek, az útvonalon)
+     filters      = színszűrők az útvonalon (a saját színük -> áteresztenek)
+     decoy        = útvonalon kívüli megtévesztő forgatható tükrök
+     decoyFilters = útvonalon kívüli megtévesztő szűrők
+     walls        = útvonalon kívüli falak
+   ================================================================ */
+function tierParams(t){
+  const i = t-1;
+  return {
+    sources:      [1,1,1,1,2,2,2,2,3,3,3,3][i],
+    rotPath:      [2,3,3,4,4,5,5,5,6,6,7,7][i],
+    fixed:        [0,1,1,1,2,2,2,3,3,4,4,5][i],
+    targets:      [2,3,3,4,4,5,5,6,6,7,7,8][i],
+    splitters:    [0,0,1,1,1,1,2,2,2,2,3,3][i],
+    filters:      [0,0,0,1,1,1,2,2,2,2,3,3][i],
+    decoy:        [0,1,1,2,2,3,3,4,4,5,5,6][i],
+    decoyFilters: [0,0,0,0,1,1,1,2,2,2,3,3][i],
+    walls:        [5,7,9,11,13,15,17,19,21,24,27,30][i]
+  };
+}
+
+/* Forrás egy véletlen szélső cellán, befelé tüzelve */
+function randBorderSource(){
+  const side = pick(['top','bottom','left','right']);
+  const i = randInt(2,GRID-3);
+  if(side==='top')    return {x:i, y:0,      dir:'D'};
+  if(side==='bottom') return {x:i, y:GRID-1, dir:'U'};
+  if(side==='left')   return {x:0, y:i,      dir:'R'};
+  return                     {x:GRID-1, y:i, dir:'L'};
+}
+
+/* ================================================================
+   LÉZER-NYOMKÖVETÉS (validációhoz: csak az aktivált célok halmaza)
+   Több sugár BFS-e. Tükör: minden színt visszaver. Sugárosztó: az
+   eredeti áthalad ÉS tükrözött másolat indul. Színszűrő: csak a saját
+   színét engedi át, mást elnyel. Célpont: a saját színű sugártól
+   aktiválódik, a sugár áthalad rajta. Forráscella: elnyel.
+   Ciklusvédelem: (cella,irány,szín) visited + sugár- és lépéskorlát.
+   ================================================================ */
+function traceAll(puzzle, rotMap){
+  const wallSet   = new Set(puzzle.walls.map(([x,y])=>key(x,y)));
+  const targetMap = new Map(puzzle.targets.map(t=>[key(t[0],t[1]), t[2]]));
+  const fixedMap  = new Map(puzzle.fixed.map(m=>[key(m.x,m.y), m.type]));
+  const splitMap  = new Map(puzzle.splitters.map(s=>[key(s.x,s.y), s.type]));
+  const filterMap = new Map(puzzle.filters.map(f=>[key(f.x,f.y), f.color]));
+  const srcSet    = new Set(puzzle.sources.map(s=>key(s.x,s.y)));
+  const active = new Set();
+  const visited = new Set();
+  const queue = puzzle.sources.map(s=>({x:s.x,y:s.y,dx:DIR[s.dir][0],dy:DIR[s.dir][1],color:s.color}));
+  let rays = 0;
+  while(queue.length && rays++ < 40){
+    let {x,y,dx,dy,color} = queue.shift();
+    let g = 0;
+    while(g++ < 3000){
+      const nx=x+dx, ny=y+dy;
+      if(!inB(nx,ny)) break;
+      const k = key(nx,ny);
+      if(wallSet.has(k)) break;
+      if(srcSet.has(k)) break;                          // forráscella elnyel
+      const spl = splitMap.get(k);
+      if(spl){
+        const vk = k+"|"+dx+","+dy+"|"+color;
+        if(visited.has(vk)) break;
+        visited.add(vk);
+        const [rdx,rdy] = reflect(dx,dy,spl);
+        queue.push({x:nx,y:ny,dx:rdx,dy:rdy,color});    // tükrözött másolat
+        x=nx; y=ny; continue;                           // az eredeti áthalad
+      }
+      const mir = fixedMap.has(k) ? fixedMap.get(k) : rotMap.get(k);
+      if(mir){
+        const vk = k+"|"+dx+","+dy+"|"+color;
+        if(visited.has(vk)) break;
+        visited.add(vk);
+        [dx,dy] = reflect(dx,dy,mir);
+        x=nx; y=ny; continue;
+      }
+      const fc = filterMap.get(k);
+      if(fc !== undefined){
+        if(fc !== color) break;                         // idegen szín: elnyelve
+        x=nx; y=ny; continue;                           // saját szín: áthalad
+      }
+      const tc = targetMap.get(k);
+      if(tc !== undefined && tc === color) active.add(k);
+      x=nx; y=ny;
+    }
+  }
+  return active;
+}
+
+/* rotMap a megoldáshoz (useSol=true) vagy a kezdőálláshoz (false) */
+function rotMapFrom(p, useSol){
+  const m = new Map();
+  for(const mr of p.mirrors) m.set(key(mr.x,mr.y), useSol ? mr.sol : mr.init);
+  return m;
+}
+
+/* ================================================================
+   PÁLYAGENERÁLÁS — KONSTRUKTÍV ("megoldásból visszafelé")
+   1) Minden forráshoz visszalépéses, önmagát és a többi útvonalat nem
+      keresztező lézerútvonalat építünk (törésekre tükör, a végén záró
+      egyenes a rács széléig). Az egyenes cellák IRÁNYÁT is rögzítjük.
+   2) Minden útvonal ZÁRÓ szakaszára kényszerítetten kerül 1 célpont ->
+      így minden útvonaltükör teherviselő (átfordítva elvész az a cél).
+   3) Sugárosztók egyenes cellákra, merőleges, >=2 szabad cellás ággal;
+      az ágakra is kerülhet cél. Színszűrők az útvonalra a saját
+      színükkel (a megoldás-sugár áthalad rajtuk).
+   4) Útvonalon KÍVÜL: falak, csali tükrök és csali szűrők (a megoldás
+      sugarait nem érinthetik).
+   5) Keverés (2. szinttől MINDEN útvonaltükör rossz), majd teljes
+      validáció; a 2. szinttől 1-2 kattintásos megoldás tilos.
+   ================================================================ */
+
+/* 1) Útvonalépítő egy forráshoz, visszalépéssel */
+function buildPath(occupied, source, nMirrors){
+  const local = new Set();                              // rollbackhez
+  const occ = (x,y) => occupied.has(key(x,y)) || local.has(key(x,y));
+  const add = (x,y) => local.add(key(x,y));
+  add(source.x, source.y);
+  const mirrors=[], straight=[], closing=[];
+  function extend(curX,curY,dir,left){
+    const [dx,dy] = DIR[dir];
+    if(left===0){
+      // Záró egyenes a rács széléig — minden cellának szabadnak kell lennie
+      let x=curX+dx, y=curY+dy; const cells=[];
+      while(inB(x,y)){ if(occ(x,y)) return false; cells.push({x,y,dir}); x+=dx; y+=dy; }
+      if(cells.length===0) return false;
+      for(const c of cells){ add(c.x,c.y); closing.push(c); }
+      return true;
+    }
+    for(const runLen of shuffle([1,2,3,4])){            // egyenes szakasz hossza
+      const seg=[]; let good=true;
+      for(let i=1;i<=runLen;i++){
+        const x=curX+dx*i, y=curY+dy*i;
+        if(!inB(x,y) || occ(x,y)){ good=false; break; }
+        seg.push({x,y,dir});
+      }
+      if(!good) continue;
+      const mx=curX+dx*runLen, my=curY+dy*runLen;       // tükör helye
+      const straightPart = seg.slice(0,runLen-1);
+      for(const nd of shuffle(PERP[dir])){              // új, merőleges irány
+        const [ndx,ndy]=DIR[nd], ax=mx+ndx, ay=my+ndy;
+        if(!inB(ax,ay) || occ(ax,ay)) continue;
+        for(const c of straightPart) add(c.x,c.y);
+        add(mx,my);
+        const bs=straight.length;
+        for(const c of straightPart) straight.push(c);
+        mirrors.push({x:mx, y:my, type:mirrorTypeFor(dir,nd)});
+        if(extend(mx,my,nd,left-1)) return true;
+        mirrors.pop(); straight.length=bs;              // visszalépés
+        for(const c of straightPart) local.delete(key(c.x,c.y));
+        local.delete(key(mx,my));
+      }
+    }
+    return false;
+  }
+  if(extend(source.x, source.y, source.dir, nMirrors)){
+    local.forEach(k => occupied.add(k));                // siker: véglegesítés
+    return { mirrors, straight, closing };
+  }
+  return null;
+}
+
+/* 2-4) Teljes pálya összeállítása egy próbában (kudarcnál null) */
+function tryBuild(params, tier){
+  const occupied = new Set();
+  const sources=[], paths=[];
+  // tükörszám elosztása a források közt (mindegyiknek legalább 1)
+  const per=[];
+  { let rem = params.rotPath + params.fixed;
+    for(let k=0;k<params.sources;k++){
+      const share = Math.max(1, Math.floor(rem/(params.sources-k)));
+      per.push(share); rem -= share;
+    } }
+  for(let k=0;k<params.sources;k++){
+    let built=null;
+    for(let a=0;a<30 && !built;a++){
+      const s = randBorderSource();
+      if(occupied.has(key(s.x,s.y))) continue;
+      built = buildPath(occupied, s, per[k]);
+      if(built){ sources.push({...s, color:COLORS[k]}); paths.push({...built, color:COLORS[k], branch:[]}); }
+    }
+    if(!built) return null;
+  }
+  const used = new Set();                               // speciális elemet kapott cellák
+  // Kényszerített cél minden útvonal ZÁRÓ szakaszára -> tükrök teherviselők
+  const targets=[];
+  for(const p of paths){
+    const cands = p.closing.filter(c=>!used.has(key(c.x,c.y)));
+    if(!cands.length) return null;
+    const c = pick(cands);
+    used.add(key(c.x,c.y));
+    targets.push([c.x,c.y,p.color]);
+  }
+  // Sugárosztók: egyenes cellára, merőleges, legalább 2 szabad cellás ággal
+  const splitters=[];
+  for(let s=0;s<params.splitters;s++){
+    let placed=false;
+    for(const pi of shuffle(paths.map((_,i)=>i))){
+      const p = paths[pi];
+      const cands = shuffle([...p.straight, ...p.closing].filter(c=>!used.has(key(c.x,c.y))));
+      for(const c of cands){
+        for(const type of shuffle(['/','\\'])){
+          const [dx,dy]=DIR[c.dir];
+          const [rdx,rdy]=reflect(dx,dy,type);
+          const prefix=[];
+          let x=c.x+rdx, y=c.y+rdy;
+          while(inB(x,y) && !occupied.has(key(x,y))){ prefix.push({x,y}); x+=rdx; y+=rdy; }
+          if(prefix.length<2) continue;
+          splitters.push({x:c.x, y:c.y, type});
+          used.add(key(c.x,c.y));
+          prefix.forEach(b=>{ occupied.add(key(b.x,b.y)); p.branch.push(b); });
+          placed=true; break;
+        }
+        if(placed) break;
+      }
+      if(placed) break;
+    }
+    if(!placed) return null;
+  }
+  // Színszűrők az útvonalra (a saját színük -> a megoldás-sugár áthalad)
+  const filters=[];
+  for(let f=0;f<params.filters;f++){
+    let placed=false;
+    for(const pi of shuffle(paths.map((_,i)=>i))){
+      const p = paths[pi];
+      const cands = [...p.straight, ...p.closing].filter(c=>!used.has(key(c.x,c.y)));
+      if(!cands.length) continue;
+      const c = pick(cands);
+      used.add(key(c.x,c.y));
+      filters.push({x:c.x, y:c.y, color:p.color});
+      placed=true; break;
+    }
+    if(!placed) return null;
+  }
+  // További célok az útvonal- és ágcellákról (színhelyesen)
+  const pool=[];
+  paths.forEach(p=>{
+    [...p.straight, ...p.closing].forEach(c=>{ if(!used.has(key(c.x,c.y))) pool.push([c.x,c.y,p.color]); });
+    p.branch.forEach(b=>{ if(!used.has(key(b.x,b.y))) pool.push([b.x,b.y,p.color]); });
+  });
+  const need = params.targets - targets.length;
+  if(pool.length < need) return null;
+  shuffle(pool).slice(0,need).forEach(t=>{ used.add(key(t[0],t[1])); targets.push(t); });
+  // Rögzített tükrök kijelölése az útvonaltükrök közül
+  const allMirrors=[];
+  paths.forEach(p => p.mirrors.forEach(m => allMirrors.push(m)));
+  const idxs = shuffle(allMirrors.map((_,i)=>i));
+  const fixedIdx = new Set(idxs.slice(0, params.fixed));
+  const fixed=[], rotPath=[];
+  allMirrors.forEach((m,i)=>{
+    if(fixedIdx.has(i)) fixed.push({x:m.x, y:m.y, type:m.type});
+    else                rotPath.push({x:m.x, y:m.y, sol:m.type});
+  });
+  if(rotPath.length===0) return null;
+  // Útvonalon kívüli elemek: csali tükrök, csali szűrők, falak
+  const off=[];
+  for(let x=0;x<GRID;x++) for(let y=0;y<GRID;y++)
+    if(!occupied.has(key(x,y))) off.push([x,y]);
+  const offs = shuffle(off); let p0=0;
+  const decoyCells   = offs.slice(p0, p0+params.decoy);        p0+=params.decoy;
+  const dFilterCells = offs.slice(p0, p0+params.decoyFilters); p0+=params.decoyFilters;
+  const wallCells    = offs.slice(p0, p0+params.walls);        p0+=params.walls;
+  const mirrors=[];
+  rotPath.forEach(m => mirrors.push({x:m.x, y:m.y, sol:m.sol, init:m.sol, isPath:true}));
+  decoyCells.forEach(c=>{
+    const t = Math.random()<.5?'/':'\\';
+    mirrors.push({x:c[0], y:c[1], sol:t, init:t, isPath:false});
+  });
+  dFilterCells.forEach(c => filters.push({x:c[0], y:c[1], color:pick(COLORS.slice(0, Math.max(1, params.sources)))}));
+  return {
+    tier, sources, walls:wallCells, fixed, splitters, filters, mirrors, targets,
+    counts:{ sources:params.sources, rotPath:rotPath.length, fixed:fixed.length,
+             splitters:splitters.length, filters:params.filters, decoy:decoyCells.length,
+             decoyFilters:dFilterCells.length, walls:wallCells.length, targets:targets.length }
+  };
+}
+
+/* 5) Keverés: 2. szinttől MINDEN útvonaltükör rossz (>=3 javítás kell);
+      1. szinten 1-2 rossz (könnyű bevezető). PAR = rossz tükrök száma. */
+function scramble(puzzle){
+  const pathRot = puzzle.mirrors.filter(m=>m.isPath);
+  puzzle.mirrors.forEach(m => { if(!m.isPath){ m.init = Math.random()<.5?'/':'\\'; m.sol = m.init; } });
+  const wrong = (puzzle.tier>=2) ? pathRot.length : Math.min(pathRot.length, randInt(1,2));
+  pathRot.forEach(m => { m.init = m.sol; });
+  shuffle(pathRot).slice(0,wrong).forEach(m => { m.init = (m.sol==='/'?'\\':'/'); });
+  puzzle.par = wrong;                                   // minimum kattintásszám
+}
+
+/* Van-e legfeljebb maxClicks kattintásos megoldás? (minden 1- és 2-elemű
+   tükörkombinációt végigpróbál, a csalikat is beleértve) */
+function hasShortSolution(puzzle, maxClicks){
+  const M = puzzle.mirrors, n = M.length;
+  const base = () => { const rm=new Map(); M.forEach(m=>rm.set(key(m.x,m.y), m.init)); return rm; };
+  const test = (idxs) => {
+    const rm = base();
+    idxs.forEach(i => { const k=key(M[i].x,M[i].y); rm.set(k, rm.get(k)==='/'?'\\':'/'); });
+    return traceAll(puzzle, rm).size === puzzle.targets.length;
+  };
+  if(maxClicks>=1) for(let i=0;i<n;i++) if(test([i])) return true;
+  if(maxClicks>=2) for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) if(test([i,j])) return true;
+  return false;
+}
+
+/* Teherviselés: bármely útvonaltükör átfordítása bontsa meg a megoldást */
+function checkNecessity(puzzle){
+  const pr = puzzle.mirrors.filter(m=>m.isPath);
+  for(const m of pr){
+    const rm = rotMapFrom(puzzle,true);
+    const k = key(m.x,m.y);
+    rm.set(k, rm.get(k)==='/'?'\\':'/');
+    if(traceAll(puzzle, rm).size === puzzle.targets.length) return false;
+  }
+  return true;
+}
+
+/* Végső ellenőrzés a játékos elé bocsátás előtt */
+function validatePuzzle(puzzle){
+  if(traceAll(puzzle, rotMapFrom(puzzle,true)).size !== puzzle.targets.length) return false;
+  if(traceAll(puzzle, rotMapFrom(puzzle,false)).size === puzzle.targets.length) return false;
+  const pr = puzzle.mirrors.filter(m=>m.isPath);
+  if(pr.length===0) return false;
+  if(!pr.some(m=>m.init!==m.sol)) return false;
+  return true;
+}
+
+/* Végső mentsvár (gyakorlatilag sosem kell): garantáltan jó, egyszínű pálya */
+function hardcodedTiny(tier){
+  if(tier>=2){
+    const p = {
+      tier, sources:[{x:0,y:0,dir:'R',color:'G'}],
+      walls:[[7,7],[3,11],[12,8],[2,2]], fixed:[], splitters:[], filters:[],
+      mirrors:[ {x:5,y:0, sol:'\\', init:'/',  isPath:true},
+                {x:5,y:5, sol:'\\', init:'/',  isPath:true},
+                {x:10,y:5,sol:'/',  init:'\\', isPath:true} ],
+      targets:[ [5,3,'G'],[8,5,'G'],[10,2,'G'] ],
+      counts:{sources:1,rotPath:3,fixed:0,splitters:0,filters:0,decoy:0,decoyFilters:0,walls:4,targets:3}
+    };
+    p.par = 3; return p;
+  }
+  const p = {
+    tier, sources:[{x:0,y:0,dir:'R',color:'G'}],
+    walls:[[7,7],[3,9],[10,4],[6,2]], fixed:[], splitters:[], filters:[],
+    mirrors:[ {x:5,y:0,sol:'\\',init:'/',isPath:true}, {x:5,y:5,sol:'/',init:'\\',isPath:true} ],
+    targets:[ [5,3,'G'],[3,5,'G'] ],
+    counts:{sources:1,rotPath:2,fixed:0,splitters:0,filters:0,decoy:0,decoyFilters:0,walls:4,targets:2}
+  };
+  p.par = 2; return p;
+}
+
+/* Fő generátor: szigorú -> enyhébb -> minimál tervek, minden jelölt validálva.
+   A 2. szinttől csak akkor fogad el, ha NINCS 1-2 kattintásos megoldás. */
+function generateLevel(tier){
+  const base = tierParams(tier);
+  const reduced = {...base,
+    splitters:Math.min(base.splitters,1), filters:Math.min(base.filters,1),
+    decoy:Math.max(0,base.decoy-1), decoyFilters:0, walls:Math.max(2,base.walls-4)};
+  const minimal = (tier>=2)
+    ? {sources:1, rotPath:3, fixed:0, targets:3, splitters:0, filters:0, decoy:0, decoyFilters:0, walls:5}
+    : {sources:1, rotPath:2, fixed:0, targets:2, splitters:0, filters:0, decoy:0, decoyFilters:0, walls:4};
+  const plans = [
+    { p:base,    necessity:true,  tries:260 },
+    { p:base,    necessity:false, tries:200 },
+    { p:reduced, necessity:false, tries:200 },
+    { p:minimal, necessity:false, tries:400 }
+  ];
+  const noShort = (pz) => !(tier>=2 && hasShortSolution(pz, 2));
+  for(const plan of plans){
+    for(let a=0;a<plan.tries;a++){
+      const puzzle = tryBuild(plan.p, tier);
+      if(!puzzle) continue;
+      scramble(puzzle);
+      if(plan.necessity && !checkNecessity(puzzle)) continue;
+      if(validatePuzzle(puzzle) && noShort(puzzle)) return puzzle;
+    }
+  }
+  return hardcodedTiny(tier);
+}
+
+/* ================================================================
+   JÁTÉKÁLLAPOT + MENTÉS
+   ================================================================ */
+const SAVE_KEY = "fenyhalo1984_save_v2";
+let save = { lastTier:1, highestTier:1, totalScore:0, solves:0, bestSteps:{}, sound:true };
+
+/* Mentés betöltése/írása — try/catch, mert a localStorage nem mindig elérhető */
+function loadSave(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d && typeof d==="object"){
+        save.lastTier    = Math.min(MAX_TIER, Math.max(1, d.lastTier|0 || 1));
+        save.highestTier = Math.min(MAX_TIER, Math.max(1, d.highestTier|0 || 1));
+        save.totalScore  = Math.max(0, d.totalScore|0 || 0);
+        save.solves      = Math.max(0, d.solves|0 || 0);
+        save.bestSteps   = (d.bestSteps && typeof d.bestSteps==="object") ? d.bestSteps : {};
+        save.sound       = (d.sound === false) ? false : true;
+      }
+    }
+  }catch(e){ /* privát mód / letiltott tároló: mentés nélkül fut tovább */ }
+}
+function persistSave(){
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }catch(e){}
+}
+function wipeSave(){
+  if(!confirm("Biztosan törlöd a mentett pontszámot és haladást?")) return;
+  save = { lastTier:tier, highestTier:1, totalScore:0, solves:0, bestSteps:{}, sound:save.sound };
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+  persistSave();
+  recompute();
+}
+
+/* ================================================================
+   RETRÓ HANGEFFEKTEK — Web Audio API, külső fájl nélkül
+   Rövid, 8-bites jellegű négyszögjel-hangok. Az AudioContext lustán,
+   az első felhasználói kattintásra jön létre (autoplay-szabályok),
+   minden hívás try/catch-ben fut, így hang nélkül is hibátlan a játék.
+   ================================================================ */
+let audioCtx = null;
+function audio(){
+  if(!save.sound) return null;
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }catch(e){ return null; }
+}
+/* Egyetlen rövid hang: frekvencia, hossz(mp), opciók {at,vol,wave,slide} */
+function tone(freq, dur, opts){
+  const a = audio(); if(!a) return;
+  const o = opts || {};
+  try{
+    const t0 = a.currentTime + (o.at || 0);
+    const osc = a.createOscillator(), g = a.createGain();
+    osc.type = o.wave || "square";
+    osc.frequency.setValueAtTime(freq, t0);
+    if(o.slide) osc.frequency.exponentialRampToValueAtTime(o.slide, t0+dur);
+    g.gain.setValueAtTime(o.vol || 0.07, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    osc.connect(g); g.connect(a.destination);
+    osc.start(t0); osc.stop(t0+dur+0.03);
+  }catch(e){}
+}
+function sfxRotate(){                       // tükörforgatás: rövid dupla katt
+  tone(240,0.05,{vol:.05}); tone(360,0.04,{at:.045,vol:.04});
+}
+function sfxTargetOn(i){                    // érzékelő aktiválódik: emelkedő ping
+  tone(620+i*90,0.09,{vol:.06}); tone(930+i*90,0.08,{at:.07,vol:.05});
+}
+function sfxTargetOff(){                    // érzékelő kialszik: mély buffanás
+  tone(180,0.09,{wave:"sawtooth",vol:.035,slide:120});
+}
+function sfxLevel(){                        // új pálya: felfutó sweep
+  tone(180,0.22,{slide:720,vol:.05});
+}
+function sfxWin(){                          // győzelem: 8-bites fanfár
+  const N=[523,659,784,1047,784,1047,1319];
+  N.forEach((f,i)=>tone(f,0.14,{at:i*0.095,vol:.07}));
+  tone(1568,0.5,{at:N.length*0.095,vol:.06});
+  tone(523, 0.5,{at:N.length*0.095,vol:.04,wave:"triangle"});
+}
+function updateSoundBtn(){
+  document.getElementById("btnSound").textContent = save.sound ? "♪ HANG: BE" : "♪ HANG: KI";
+}
+function toggleSound(){
+  save.sound = !save.sound; persistSave(); updateSoundBtn();
+  if(save.sound) sfxRotate();               // visszajelző pitty bekapcsoláskor
+}
+
+let tier = 1;
+let puzzle = null;
+let rotMap = new Map();     // "x,y" -> AKTUÁLIS tükörállás (minden forgatható)
+let steps = 0;
+let solved = false;
+let beam = { rays:[], active:new Set() };
+
+/* Győzelmi bemutató: a "PÁLYA MEGOLDVA" felirat késleltetve jelenik meg,
+   közben részecske- és gyűrűeffekt fut, hogy a játékos gyönyörködhessen
+   a kész fényhálóban. */
+const WIN_DELAY = 2400;     // ms a felirat megjelenéséig
+let winTimer = null;        // a késleltetett felirat időzítője
+let winFx = null;           // effekt-állapot: {start, parts:[]}
+let pendingWinMsg = "";     // a majd megjelenítendő üzenet
+
+function cancelWin(){
+  if(winTimer){ clearTimeout(winTimer); winTimer = null; }
+  winFx = null;
+}
+
+/* Részecskék és gyűrűk minden célpontból, kis időeltolással */
+function makeWinFx(){
+  const parts = [];
+  puzzle.targets.forEach((tg,i)=>{
+    const [x,y,c] = tg;
+    const delay = i*140;
+    for(let p=0;p<16;p++){
+      const a = Math.random()*Math.PI*2, sp = 30+Math.random()*90;   // px/mp
+      parts.push({x:cx(x), y:cy(y), vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+                  color:c, delay, life:900+Math.random()*500});
+    }
+  });
+  return { start: performance.now(), parts };
+}
+
+function startWinCelebration(){
+  cancelWin();
+  sfxWin();
+  winFx = makeWinFx();
+  winTimer = setTimeout(()=>{
+    winTimer = null;
+    document.getElementById("winMsg").textContent = pendingWinMsg;
+    document.getElementById("win").classList.add("show");
+  }, WIN_DELAY);
+}
+
+/* Új pálya generálása az adott szinten (silent: indításkor hang nélkül) */
+function newGame(t, silent){
+  tier = Math.max(1, Math.min(MAX_TIER, t));
+  cancelWin();
+  puzzle = generateLevel(tier);
+  puzzle.scored = false;                                // pontot csak egyszer adjon
+  rotMap = new Map(puzzle.mirrors.map(m => [key(m.x,m.y), m.init]));
+  steps = 0; solved = false;
+  save.lastTier = tier; persistSave();                  // haladás: utolsó szint
+  document.getElementById("win").classList.remove("show");
+  if(!silent) sfxLevel();
+  recompute();
+  updateNav();
+}
+
+/* Aktuális pálya újrakezdése (ugyanaz az elrendezés, kezdőállás) */
+function restart(){
+  cancelWin();
+  rotMap = new Map(puzzle.mirrors.map(m => [key(m.x,m.y), m.init]));
+  steps = 0; solved = false;
+  document.getElementById("win").classList.remove("show");
+  recompute();
+}
+
+/* ================================================================
+   LÉZERÚT A KIRAJZOLÁSHOZ — mint traceAll, de sugaranként polivonalat
+   is gyűjt {color, pts}. A szabályok azonosak.
+   ================================================================ */
+function traceRays(){
+  const wallSet   = new Set(puzzle.walls.map(([x,y])=>key(x,y)));
+  const targetMap = new Map(puzzle.targets.map(t=>[key(t[0],t[1]), t[2]]));
+  const fixedMap  = new Map(puzzle.fixed.map(m=>[key(m.x,m.y), m.type]));
+  const splitMap  = new Map(puzzle.splitters.map(s=>[key(s.x,s.y), s.type]));
+  const filterMap = new Map(puzzle.filters.map(f=>[key(f.x,f.y), f.color]));
+  const srcSet    = new Set(puzzle.sources.map(s=>key(s.x,s.y)));
+  const active = new Set();
+  const visited = new Set();
+  const rays = [];
+  const queue = puzzle.sources.map(s=>({
+    x:s.x, y:s.y, dx:DIR[s.dir][0], dy:DIR[s.dir][1], color:s.color,
+    pts:[[cx(s.x), cy(s.y)]]
+  }));
+  let cnt = 0;
+  while(queue.length && cnt++ < 40){
+    const ray = queue.shift();
+    let {x,y,dx,dy,color} = ray;
+    const pts = ray.pts;
+    let g = 0;
+    while(g++ < 3000){
+      const nx=x+dx, ny=y+dy;
+      if(!inB(nx,ny)){ pts.push([cx(x)+dx*CELL, cy(y)+dy*CELL]); break; }
+      const k = key(nx,ny);
+      if(wallSet.has(k) || srcSet.has(k)){ pts.push([cx(x)+dx*CELL/2, cy(y)+dy*CELL/2]); break; }
+      const spl = splitMap.get(k);
+      if(spl){
+        const vk = k+"|"+dx+","+dy+"|"+color;
+        if(visited.has(vk)){ pts.push([cx(nx),cy(ny)]); break; }
+        visited.add(vk);
+        pts.push([cx(nx),cy(ny)]);
+        const [rdx,rdy] = reflect(dx,dy,spl);
+        queue.push({x:nx,y:ny,dx:rdx,dy:rdy,color,pts:[[cx(nx),cy(ny)]]});
+        x=nx; y=ny; continue;
+      }
+      const mir = fixedMap.has(k) ? fixedMap.get(k) : rotMap.get(k);
+      if(mir){
+        const vk = k+"|"+dx+","+dy+"|"+color;
+        if(visited.has(vk)){ pts.push([cx(nx),cy(ny)]); break; }
+        visited.add(vk);
+        pts.push([cx(nx),cy(ny)]);
+        [dx,dy] = reflect(dx,dy,mir);
+        x=nx; y=ny; continue;
+      }
+      const fc = filterMap.get(k);
+      if(fc !== undefined){
+        if(fc !== color){ pts.push([cx(x)+dx*CELL/2, cy(y)+dy*CELL/2]); break; }
+        x=nx; y=ny; continue;
+      }
+      const tc = targetMap.get(k);
+      if(tc !== undefined && tc === color) active.add(k);
+      x=nx; y=ny;
+    }
+    rays.push({color, pts});
+  }
+  return { rays, active };
+}
+
+/* Újraszámolás minden változás után: lézerutak + kijelzők + győzelem + pont.
+   fromClick=true esetén az újonnan aktiválódó/kialvó célok hangot adnak. */
+function recompute(fromClick){
+  const prevActive = beam.active;                       // előző állapot a hangokhoz
+  beam = traceRays();
+  const total = puzzle.targets.length;
+  const act   = beam.active.size;
+
+  if(fromClick){
+    let onIdx = 0;
+    beam.active.forEach(k => { if(!prevActive.has(k)) sfxTargetOn(onIdx++); });
+    let lost = false;
+    prevActive.forEach(k => { if(!beam.active.has(k)) lost = true; });
+    if(lost) sfxTargetOff();
+  }
+
+  document.getElementById("rLevel").textContent   = tier + " / " + MAX_TIER;
+  document.getElementById("rSteps").textContent   = steps;
+  document.getElementById("rPar").textContent     = puzzle.par;
+  document.getElementById("rTotal").textContent   = total;
+  document.getElementById("rActive").textContent  = act;
+  document.getElementById("rMirrors").textContent = puzzle.mirrors.length;
+  document.getElementById("rScore").textContent   = save.totalScore;
+  document.getElementById("rBest").textContent    = (save.bestSteps[tier]!==undefined) ? save.bestSteps[tier] : "—";
+  document.getElementById("rMax").textContent     = save.highestTier;
+  document.getElementById("bar").style.width       = (total ? act/total*100 : 0) + "%";
+
+  const diff = document.getElementById("diff");
+  if(diff.childElementCount !== MAX_TIER){
+    diff.innerHTML = "";
+    for(let i=0;i<MAX_TIER;i++) diff.appendChild(document.createElement("i"));
+  }
+  [...diff.children].forEach((seg,i)=> seg.classList.toggle("on", i < tier));
+
+  const won = act === total && total > 0;
+  if(won && !solved){
+    solved = true;
+    let msg;
+    if(!puzzle.scored){
+      // PONT: szint*100 + bónusz a PAR-hoz közeli lépésszámért; mentés
+      const pts = tier*100 + Math.max(0, puzzle.par*3 - steps)*5;
+      puzzle.scored = true;
+      save.totalScore += pts;
+      save.solves++;
+      if(tier > save.highestTier) save.highestTier = tier;
+      if(save.bestSteps[tier]===undefined || steps < save.bestSteps[tier]) save.bestSteps[tier] = steps;
+      persistSave();
+      document.getElementById("rScore").textContent = save.totalScore;
+      document.getElementById("rBest").textContent  = save.bestSteps[tier];
+      document.getElementById("rMax").textContent   = save.highestTier;
+      msg = "+" + pts + " PONT — MINDEN ÉRZÉKELŐ AKTÍV";
+    } else {
+      msg = "MINDEN ÉRZÉKELŐ AKTÍV";
+    }
+    msg += (tier===MAX_TIER) ? " — A 12. SZINT TELJESÍTVE. KIVÁLÓ!" : " — LÉPJ A KÖVETKEZŐ SZINTRE";
+    pendingWinMsg = msg;
+    startWinCelebration();                              // effekt + fanfár, felirat késleltetve
+  } else if(!won){
+    solved = false;
+    cancelWin();
+    document.getElementById("win").classList.remove("show");
+  }
+}
+
+/* ================================================================
+   KIRAJZOLÁS (animációs ciklus a látványos sugarakhoz)
+   ================================================================ */
+function draw(t){
+  ctx.fillStyle = "#010c05";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawGridLines();
+  drawWalls();
+  drawBeams(t);         // a sugarak a tükrök/célok alá kerülnek
+  drawSources();
+  drawSplitters();
+  drawFilters();
+  drawMirrors();
+  drawTargets(t);
+  drawWinFx(t);         // győzelmi részecskék/gyűrűk (csak ünneplés alatt)
+  requestAnimationFrame(draw);
+}
+
+function drawGridLines(){
+  ctx.strokeStyle = getCSS("--grid"); ctx.lineWidth = 1; ctx.globalAlpha = .65;
+  for(let i=0;i<=GRID;i++){
+    const p = i*CELL + .5;
+    ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,GRID*CELL); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(GRID*CELL,p); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawWalls(){
+  puzzle.walls.forEach(([x,y])=>{
+    const px=x*CELL, py=y*CELL;
+    ctx.fillStyle = getCSS("--wall");
+    ctx.fillRect(px+2, py+2, CELL-4, CELL-4);
+    ctx.strokeStyle = getCSS("--dim"); ctx.globalAlpha=.5; ctx.lineWidth=1;
+    for(let o=-CELL;o<CELL;o+=6){       // 45°-os satírozás
+      ctx.beginPath();
+      ctx.moveTo(px+2+Math.max(0,o),               py+2+Math.max(0,-o));
+      ctx.lineTo(px+2+Math.min(CELL-4,o+CELL-4),   py+2+Math.min(CELL-4,-o+CELL-4));
+      ctx.stroke();
+    }
+    ctx.globalAlpha=.5; ctx.strokeStyle=getCSS("--green");
+    ctx.strokeRect(px+2.5, py+2.5, CELL-5, CELL-5);
+    ctx.globalAlpha=1;
+  });
+}
+
+/* Források: keretes blokk a sugár színével + irányt jelző nyíl */
+function drawSources(){
+  puzzle.sources.forEach(s=>{
+    const col = COLOR_DEFS[s.color];
+    const px=s.x*CELL, py=s.y*CELL, m=CELL/2;
+    ctx.fillStyle="#06351a"; ctx.fillRect(px+5,py+5,CELL-10,CELL-10);
+    ctx.strokeStyle=col.beam; ctx.lineWidth=2;
+    ctx.shadowColor=col.beam; ctx.shadowBlur=10;
+    ctx.strokeRect(px+5,py+5,CELL-10,CELL-10); ctx.shadowBlur=0;
+    const [ux,uy]=DIR[s.dir], ccx=px+m, ccy=py+m, sz=7;
+    ctx.fillStyle=col.bright;
+    ctx.beginPath();
+    ctx.moveTo(ccx+ux*sz,          ccy+uy*sz);
+    ctx.lineTo(ccx-ux*sz+uy*sz,    ccy-uy*sz+ux*sz);
+    ctx.lineTo(ccx-ux*sz-uy*sz,    ccy-uy*sz-ux*sz);
+    ctx.closePath(); ctx.fill();
+  });
+}
+
+/* Sugárosztók: fehéren izzó rombusz + kettős átló (rögzített elem) */
+function drawSplitters(){
+  puzzle.splitters.forEach(s=>{
+    const px=s.x*CELL, py=s.y*CELL, m=CELL/2, r=CELL*0.36;
+    ctx.strokeStyle="#eafff2"; ctx.lineWidth=1.5;
+    ctx.shadowColor="#eafff2"; ctx.shadowBlur=9;
+    ctx.beginPath();
+    ctx.moveTo(px+m, py+m-r); ctx.lineTo(px+m+r, py+m);
+    ctx.lineTo(px+m, py+m+r); ctx.lineTo(px+m-r, py+m);
+    ctx.closePath(); ctx.stroke();
+    // kettős átló a tükrözési irány szerint
+    const pad=12, off=3;
+    ctx.lineWidth=2.4;
+    for(const o of [-off, off]){
+      ctx.beginPath();
+      if(s.type==='/'){ ctx.moveTo(px+pad+o, py+CELL-pad+o); ctx.lineTo(px+CELL-pad+o, py+pad+o); }
+      else            { ctx.moveTo(px+pad+o, py+pad-o);      ctx.lineTo(px+CELL-pad+o, py+CELL-pad-o); }
+      ctx.stroke();
+    }
+    ctx.shadowBlur=0;
+  });
+}
+
+/* Színszűrők: színes, áttetsző "kapu" három függőleges lamellával */
+function drawFilters(){
+  puzzle.filters.forEach(f=>{
+    const col = COLOR_DEFS[f.color];
+    const px=f.x*CELL, py=f.y*CELL;
+    ctx.fillStyle = col.beam; ctx.globalAlpha = .14;
+    ctx.fillRect(px+5, py+5, CELL-10, CELL-10);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = col.beam; ctx.lineWidth=1.6;
+    ctx.shadowColor = col.beam; ctx.shadowBlur=8;
+    ctx.strokeRect(px+5.5, py+5.5, CELL-11, CELL-11);
+    for(let i=1;i<=3;i++){
+      const lx = px + 5 + i*(CELL-10)/4;
+      ctx.beginPath(); ctx.moveTo(lx, py+9); ctx.lineTo(lx, py+CELL-9); ctx.stroke();
+    }
+    ctx.shadowBlur=0;
+  });
+}
+
+/* Tükrök: forgatható = zöld, rögzített = borostyán (+ sarokpont).
+   A csali-tükrök szándékosan ugyanúgy néznek ki, mint a többi zöld. */
+function drawMirrors(){
+  const pad=9;
+  const drawOne=(x,y,type,fixed)=>{
+    const px=x*CELL, py=y*CELL;
+    const col = fixed ? getCSS("--amber") : getCSS("--green");
+    ctx.strokeStyle=col; ctx.lineCap="round"; ctx.lineWidth=4;
+    ctx.shadowColor=col; ctx.shadowBlur=11;
+    ctx.beginPath();
+    if(type==='/'){ ctx.moveTo(px+pad,py+CELL-pad); ctx.lineTo(px+CELL-pad,py+pad); }
+    else          { ctx.moveTo(px+pad,py+pad);      ctx.lineTo(px+CELL-pad,py+CELL-pad); }
+    ctx.stroke(); ctx.shadowBlur=0;
+    if(fixed){ ctx.fillStyle=col; ctx.beginPath(); ctx.arc(px+CELL-6,py+6,2,0,Math.PI*2); ctx.fill(); }
+  };
+  puzzle.fixed.forEach(m => drawOne(m.x,m.y,m.type,true));
+  rotMap.forEach((type,k)=>{ const [x,y]=k.split(",").map(Number); drawOne(x,y,type,false); });
+}
+
+/* Célpontok: a saját színük gyűrűje; aktiváltan pulzáló, kitöltött, világító */
+function drawTargets(t){
+  puzzle.targets.forEach(tg=>{
+    const [x,y,c] = tg;
+    const col = COLOR_DEFS[c];
+    const on = beam.active.has(key(x,y));
+    const px=cx(x), py=cy(y), R=CELL*0.27;
+    if(on){
+      const pulse = 1 + Math.sin(t/180)*0.10;
+      ctx.shadowColor=col.bright; ctx.shadowBlur=20;
+      ctx.fillStyle=col.bright;
+      ctx.beginPath(); ctx.arc(px,py,R*0.7*pulse,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0; ctx.strokeStyle=col.beam; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(px,py,R*pulse,0,Math.PI*2); ctx.stroke();
+    } else {
+      ctx.strokeStyle=col.beam; ctx.lineWidth=2.5; ctx.globalAlpha=.85;
+      ctx.shadowColor=col.beam; ctx.shadowBlur=6;
+      ctx.beginPath(); ctx.arc(px,py,R,0,Math.PI*2); ctx.stroke(); ctx.shadowBlur=0;
+      ctx.beginPath(); ctx.arc(px,py,R*0.35,0,Math.PI*2); ctx.stroke();
+      ctx.globalAlpha=1;
+    }
+  });
+}
+
+/* Sugarak: sugaranként a saját színnel — glória + mag + áramló szaggatás */
+function drawBeams(t){
+  const flow=(Math.sin(t/350)+1)/2;
+  const surge = winFx ? (0.5+0.5*Math.sin(t/90))*0.28 : 0;   // ünneplés: lüktető ráfénylés
+  beam.rays.forEach(r=>{
+    const pts=r.pts;
+    if(pts.length<2) return;
+    const col=COLOR_DEFS[r.color];
+    const trace=()=>{ ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]); };
+    ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.strokeStyle=col.beam; ctx.globalAlpha=Math.min(1, 0.10+flow*0.06+surge);
+    ctx.lineWidth=14; ctx.shadowColor=col.beam; ctx.shadowBlur=24+surge*40; trace(); ctx.stroke();
+    ctx.globalAlpha=0.35; ctx.lineWidth=5; ctx.shadowBlur=14; trace(); ctx.stroke();
+    ctx.globalAlpha=1; ctx.strokeStyle=col.bright; ctx.lineWidth=2; ctx.shadowBlur=9; trace(); ctx.stroke();
+    ctx.strokeStyle="#ffffff"; ctx.globalAlpha=0.85; ctx.lineWidth=1.2; ctx.shadowBlur=5;
+    ctx.setLineDash([6,14]); ctx.lineDashOffset=-(t/16)%1000; trace(); ctx.stroke();
+    ctx.setLineDash([]); ctx.shadowBlur=0; ctx.globalAlpha=1;
+  });
+}
+
+/* Győzelmi effekt: minden célpontból táguló gyűrű + szétrepülő
+   pixel-részecskék a cél színében, kis időeltolással célonként. */
+function drawWinFx(t){
+  if(!winFx) return;
+  const el = t - winFx.start;
+  // táguló gyűrűk a célokból
+  puzzle.targets.forEach((tg,i)=>{
+    const age = el - i*140;
+    if(age<0 || age>1100) return;
+    const col = COLOR_DEFS[tg[2]];
+    const r = CELL*0.3 + age*0.12;
+    ctx.globalAlpha = Math.max(0, 1-age/1100)*0.8;
+    ctx.strokeStyle = col.beam; ctx.lineWidth = 2.5;
+    ctx.shadowColor = col.beam; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(cx(tg[0]), cy(tg[1]), r, 0, Math.PI*2); ctx.stroke();
+  });
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  // pixel-részecskék (retró, szögletes szikrák)
+  winFx.parts.forEach(p=>{
+    const age = el - p.delay;
+    if(age<0 || age>p.life) return;
+    const s = age/1000;
+    const px = p.x + p.vx*s, py = p.y + p.vy*s;
+    const col = COLOR_DEFS[p.color];
+    ctx.globalAlpha = Math.max(0, 1-age/p.life);
+    ctx.fillStyle = col.bright;
+    ctx.fillRect(px-2, py-2, 4, 4);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+/* ================================================================
+   INTERAKCIÓ
+   ================================================================ */
+canvas.addEventListener("click", (e)=>{
+  if(solved) return;                                   // ünneplés/megoldás után ne lehessen elrontani
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+  const gx = Math.floor((e.clientX-rect.left)*sx / CELL);
+  const gy = Math.floor((e.clientY-rect.top )*sy / CELL);
+  const k = key(gx,gy);
+  if(rotMap.has(k)){                                   // csak forgatható tükör reagál
+    rotMap.set(k, rotMap.get(k)==='/'?'\\':'/');
+    steps++;
+    sfxRotate();
+    recompute(true);
+  }
+});
+
+document.getElementById("btnReset").addEventListener("click", restart);
+document.getElementById("btnNew").addEventListener("click", ()=> newGame(tier));
+document.getElementById("btnPrev").addEventListener("click", ()=>{ if(tier>1) newGame(tier-1); });
+document.getElementById("btnNext").addEventListener("click", ()=>{ if(tier<MAX_TIER) newGame(tier+1); });
+document.getElementById("btnSound").addEventListener("click", toggleSound);
+document.getElementById("btnWipe").addEventListener("click", wipeSave);
+
+/* Súgó ablak nyitása/zárása */
+function openHelp(){ document.getElementById("help").classList.add("show"); }
+function closeHelp(){ document.getElementById("help").classList.remove("show"); }
+document.getElementById("btnHelp").addEventListener("click", openHelp);
+document.getElementById("btnHelpClose").addEventListener("click", closeHelp);
+document.getElementById("help").addEventListener("click", (e)=>{
+  if(e.target === document.getElementById("help")) closeHelp();   // háttérre kattintva zár
+});
+
+document.addEventListener("keydown", (e)=>{
+  if(e.key==="Escape") closeHelp();
+  else if(e.key==="r"||e.key==="R") restart();
+  else if(e.key==="n"||e.key==="N") newGame(tier);
+  else if(e.key==="m"||e.key==="M") toggleSound();
+  else if(e.key==="h"||e.key==="H") openHelp();
+  else if(e.key==="ArrowRight" && tier<MAX_TIER) newGame(tier+1);
+  else if(e.key==="ArrowLeft"  && tier>1)        newGame(tier-1);
+});
+
+function updateNav(){
+  document.getElementById("btnPrev").disabled = (tier===1);
+  document.getElementById("btnNext").disabled = (tier===MAX_TIER);
+}
+
+/* ================================================================
+   INDÍTÁS — mentett haladás betöltése, folytatás az utolsó szinten
+   (némán: az AudioContext úgyis csak felhasználói kattintásra indulhat)
+   ================================================================ */
+loadSave();
+updateSoundBtn();
+newGame(save.lastTier, true);
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
